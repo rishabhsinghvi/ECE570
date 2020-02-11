@@ -6,12 +6,19 @@
 #include<fstream>
 #include<cctype>
 
-void readFile(const std::string& fileName, std::map<std::string, std::set<int>>& fileIndex, int index)
+
+bool fileExists(const std::string& fileName)
 {
-    std::ifstream file(fileName);
+    std::ifstream file(fileName.c_str());
+    return file.good();
+}
+
+void readFile(const std::string& fileName, std::map<std::string, std::set<int> >& fileIndex, int index)
+{
+    std::ifstream file(fileName.c_str());
     if(!file)
     {
-        std::cout << "Unable to read file: " << fileName << '\n';
+        //std::cout << "Unable to read file: " << fileName << '\n';
         return;
     }    
 
@@ -36,22 +43,21 @@ void readFile(const std::string& fileName, std::map<std::string, std::set<int>>&
         }
     }
 
-
-    for(const auto& x: vec)
+    for(int i = 0 ; i < vec.size(); i++)
     {
-        fileIndex[x].insert(index);
+        fileIndex[vec[i]].insert(index);
     }
 }
 
 std::vector<std::string> getFiles(const std::string& fileName)
 {
-    std::ifstream file(fileName);
+    std::ifstream file(fileName.c_str());
 
     std::vector<std::string> fileNames;
 
     if(!file)
     {
-        std::cout << "Cannot open file: " << fileName << '\n';
+        //std::cout << "Cannot open file: " << fileName << '\n';
         return fileNames;
     }
 
@@ -59,24 +65,39 @@ std::vector<std::string> getFiles(const std::string& fileName)
 
     while(file >> f)
     {
-        fileNames.push_back(f);
+        if(fileExists(f))
+            fileNames.push_back(f);
     }
 
     return fileNames;
 }
 
-void printFileIndex(const std::map<std::string, std::set<int>>& fileIndex)
+void printFileIndex(const std::map<std::string, std::set<int> >& fileIndex)
 {
     
-    for(const auto& x: fileIndex)
+    int count = 0;
+    for(std::map<std::string, std::set<int> >::const_iterator x = fileIndex.begin(); x != fileIndex.end(); x++)
     {
-        std::cout << x.first << ": ";
-        for(const auto& y: x.second)
+        std::cout << x->first << ": ";
+        int inner_count = 0;
+        for(std::set<int>::const_iterator y = x->second.begin(); y != x->second.end(); y++)
         {
-            std::cout << y << " ";
+            std::cout << *y;
+            inner_count += 1;
+            if(inner_count != x->second.size())
+            {
+                std::cout << " ";
+            }
+
         }
-        std::cout << '\n';
+        count += 1;
+
+        if(count != fileIndex.size())
+        {
+            std::cout << '\n';
+        }
     }
+
 }
 
 
@@ -84,13 +105,13 @@ int main(int argc, char** argv)
 {
     if(argc!=2)
     {
-        std::cout << "Usage: ./inverter <fileName>\n";
+        //std::cout << "Usage: ./inverter <fileName>\n";
         return -1;
     }
 
     std::string fileName = std::string(argv[1]);
 
-    std::map<std::string, std::set<int>> fileIndex;
+    std::map<std::string, std::set<int> > fileIndex;
 
     std::vector<std::string> fileNames = getFiles(fileName);
 
