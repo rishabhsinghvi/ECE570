@@ -74,8 +74,6 @@ std::vector<std::string> getFiles(const std::string& fileName)
 
 void printFileIndex(const std::map<std::string, std::set<int> >& fileIndex)
 {
-    
-    int count = 0;
     for(std::map<std::string, std::set<int> >::const_iterator x = fileIndex.begin(); x != fileIndex.end(); x++)
     {
         std::cout << x->first << ": ";
@@ -90,12 +88,7 @@ void printFileIndex(const std::map<std::string, std::set<int> >& fileIndex)
             }
 
         }
-        count += 1;
-
-        if(count != fileIndex.size())
-        {
-            std::cout << '\n';
-        }
+        std::cout << '\n';
     }
 
 }
