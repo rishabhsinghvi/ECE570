@@ -4,195 +4,199 @@
 #include<fstream>
 #include<vector>
 #include<queue>
-#include<cmath>
 #include<algorithm>
+#include<stdint.h>
+
 #include "thread.h"
+#include "interrupt.h"
 
 
-// Request contains the track number as well as the id of the thread making the request
 struct Request
 {
     unsigned int threadID;
     int trackNumber;
 
-    Request(unsigned int id, int  trackNum)
+    Request(unsigned int tID, int tN)
     {
-        threadID = id;
-        trackNumber = trackNum;
+        threadID = tID;
+        trackNumber = tN;
+        //fulfilled = false;
     }
 };
 
-// Declare mutexes
-unsigned int requestAccessMutex = 0;
-unsigned int outputStreamMutex = 1;
 
-// Declare condition variables
-unsigned int queueFull = 0;
-unsigned int queueAvailable = 1;
+unsigned int requestMutex = 0;
+
+unsigned int queueFree = 100;
+unsigned int queueFull = 101;
 
 
 std::vector<std::string> fileNames;
-std::vector<bool> requestServiced; // if set to true, it means that requester can put on a new task
-std::vector<Request> requestList; // all pending requests
+std::vector<Request> requests;
 
 unsigned int numThreads;
-unsigned int maxDiskRequests; // max number of requests servicer can take
-unsigned int currentTrack;  // current track of the servicer
+unsigned int maxDiskRequests;
+unsigned int currentTrack = 0;
 
-// Function to sort requests in the SSTF manner
-bool SSTF(const Request& a, const Request& b)
+
+unsigned int getClosestTrack()
 {
-    return std::abs(a.trackNumber - currentTrack) < std::abs(b.trackNumber - currentTrack);
+    unsigned int index = 0;
+    int min = 10000000;
+
+    for(unsigned int i = 0 ; i < requests.size(); i++)
+    {
+        
+        int diff = ::abs(requests[i].trackNumber - currentTrack);
+        if(diff < min)
+        {
+            //std::cout << "Track: " << requests[i].trackNumber << ", Diff: " << diff << ", min: " << min << std::endl;
+            min = diff;
+            index = i;
+        }
+        
+    }
+
+    return index;
 }
 
-// Requester threads
 void requester(void* arg)
 {
-    int requesterId = (int)arg;
-    std::ifstream file(fileNames[requesterId].c_str());
+    int id = (intptr_t)arg;
 
-    // if file doesn't exist, return
+    std::queue<int> threadQueue;
+
+    std::ifstream file(fileNames[id].c_str());
+
     if(!file)
     {
         return;
     }
 
-    unsigned int requesterTrack;
-    std::queue<int> requestQueue;
 
-    // Store all requests for the current requester thread
-    while(file >> requesterTrack)
+    int x;
+
+    while (file >> x)
     {
-        std::cout << requesterTrack << '\n';
-        requestQueue.push(requesterTrack);
+        threadQueue.push(x);
     }
 
-    
-    thread_lock(requestAccessMutex);
+    thread_lock(requestMutex);
 
-    // Push request onto servicer's queue
-    while(!requestQueue.empty())
+    while(!threadQueue.empty())
     {
-        // Wait until this thread's previous request has been fulfilled
-        while(!requestServiced[requesterId] || requestList.size() >= maxDiskRequests)
+        while(requests.size() >= maxDiskRequests)
         {
-            thread_wait(requestAccessMutex, queueAvailable);
+            thread_wait(requestMutex, queueFree);
+            //thread_lock(requestMutex);
         }
 
-        // --------------------------------------------------
-        //  Now, we can push the request on to the list
-        Request r(requesterId, requestQueue.front());
-        requestQueue.pop();
-        
-        thread_lock(outputStreamMutex);
-        std::cout << "requester " << r.threadID << " track " << r.trackNumber << std::endl;
-        thread_unlock(outputStreamMutex);
+        Request request(id, threadQueue.front());
+        threadQueue.pop();
 
-        requestList.push_back(r);
-        
-        requestServiced[requesterId] = false;
+        requests.push_back(request);
 
-        // --------------------------------------------------------
+        thread_signal(requestMutex, queueFull);
 
-        thread_broadcast(requestAccessMutex, queueFull);  // signal to servicer that the queue is full 
+        std::cout << "requester " << request.threadID << " track "<< request.trackNumber << std::endl;
+        //std::cout << "Number of threads remaining: " << numThreads << '\n';
 
+        //if(!threadQueue.empty())
+        thread_wait(requestMutex, id);
     }
 
-
-    // After last request is done, wait until our request is fulfilled
-    while(!requestServiced[requesterId])
-    {
-        thread_wait(requestAccessMutex, queueAvailable);
-    }
-
-    numThreads -= 1;
+    //thread_wait(requestMutex, id);
     
-    if(numThreads < maxDiskRequests)
+    if(threadQueue.empty())
     {
-        maxDiskRequests = numThreads;
-        thread_broadcast(requestAccessMutex, queueFull);
+        numThreads -= 1;
+        if(numThreads < maxDiskRequests)
+        {
+            maxDiskRequests = numThreads;
+            thread_signal(requestMutex, queueFull);
+        }
     }
+    
 
-    thread_unlock(requestAccessMutex);
+    thread_unlock(requestMutex);
+
 }
 
-// Servicer thread
+
 void servicer(void* arg)
 {
-    thread_lock(requestAccessMutex);
+    thread_lock(requestMutex);
 
-    // Keep going until no more threads to service
-    while(maxDiskRequests > 0)
+    while(requests.size() > 0  && numThreads > 0)
     {
+        while(requests.size() < maxDiskRequests)
+        {
+            thread_wait(requestMutex, queueFull);
+            //thread_lock(requestMutex);
+        }
+
+        //thread_lock(requestMutex);
+        //std::cout << "Max disk requests : "<< maxDiskRequests << '\n';
         
-            // If number of requests is less than the max we can service, keep waiting
-            while(requestList.size() < maxDiskRequests)
-            {
-                thread_wait(requestAccessMutex, queueFull);
-            }
+        // std::cout << "-----------\n"; 
+        // std::cout << "Max disk requests : " << maxDiskRequests << ", number of requests in queue: " << requests.size() << ", number of threads remaining: " << numThreads << '\n';
+        // std::cout << "-----------\n";
 
-            // Sort the tracks
-            std::sort(requestList.begin(), requestList.end(), SSTF);
-    
-            // Handle request
-            Request request = requestList.front();
-            requestList.erase(requestList.begin());
+        unsigned int index = getClosestTrack();
 
-            //thread_lock(outputStreamMutex);
-            std::cout << "service requester " << request.threadID << " track " << request.trackNumber << std::endl;
-            //thread_unlock(outputStreamMutex);
+        Request r = requests[index];
+        //r.fulfilled = true;
 
-            requestServiced[request.threadID] = true;
-            currentTrack = request.trackNumber;
+        requests.erase(requests.begin() + index);
 
-            // Tell the other threads that the queue is available for adding
-            thread_broadcast(requestAccessMutex, queueAvailable);
-        
+        thread_broadcast(requestMutex, queueFree);
+
+
+        std::cout << "service requester " << r.threadID << " track " << r.trackNumber << std::endl;
+
+        // std::cout << "-----------\n"; 
+        // std::cout << "Max disk requests : " << maxDiskRequests << ", number of requests in queue: " << requests.size() << ", number of threads remaining: " << numThreads << '\n';
+        // std::cout << "-----------\n";
+
+        currentTrack = r.trackNumber;
+
+        thread_signal(requestMutex, r.threadID);
+
     }
 
-    // Unlock mutex
-    thread_unlock(requestAccessMutex);
-
+    thread_unlock(requestMutex);
 }
 
 
-// This thread starts the disk scheduling routine
+
+
+
+
 void startDiskScheduling(void* arg)
 {
-    // create servicer thread
-    thread_create(servicer, NULL);
-
-    // create requester threads
-    for(unsigned int i = 0 ; i < numThreads; i++)
+    for(unsigned int i = 0; i < numThreads; i++)
     {
         thread_create(requester, (void*)i);
     }
+
+    thread_create(servicer, NULL);
 }
+
+
+
 
 
 
 int main(int argc, char** argv)
 {
-    maxDiskRequests = atoi(argv[1]);
+    maxDiskRequests = std::atoi(argv[1]);
     numThreads = argc - 2;
-
-    // Choose the minimum of the maxDiskRequests and numThreads
     maxDiskRequests = std::min(maxDiskRequests, numThreads);
 
-    currentTrack = 0;
-    
-    for(unsigned int i = 0; i < numThreads; i++)
-    {
-        requestServiced.push_back(true);    
-    }
-
-    for(unsigned int i = 2; i < argc; i++)
+    for(int i = 2; i < argc; i++)
     {
         fileNames.push_back(std::string(argv[i]));
     }
 
-
-    thread_libinit(&startDiskScheduling, NULL);
-
+    thread_libinit(startDiskScheduling, NULL);
 }
-
